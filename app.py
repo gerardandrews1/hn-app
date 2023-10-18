@@ -18,7 +18,7 @@ st.set_page_config(layout="wide")
 st.markdown('<style>div.block-container{padding-top:1rem;}</style>',unsafe_allow_html=True)
 st.markdown('<style>div.block-container{padding-top:1rem;}</style>',unsafe_allow_html=True)
 
-df = pd.read_csv("../../Downloads/Bookings Clean.csv")
+df = pd.read_csv("Bookings Clean.csv")
 
 df["Created"] = pd.to_datetime(df["Created"])
 
