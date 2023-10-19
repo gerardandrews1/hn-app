@@ -7,6 +7,11 @@ from ratelimit import limits, sleep_and_retry
 import json
 
 
+def highlight(s):
+                if s["Payment Date"] == None:
+                    return ['background-color: #50C878'] * len(s)
+                else:
+                    return ['background-color: white'] * len(s)
 
 
 st.set_page_config(layout="wide")
@@ -58,7 +63,10 @@ else:
 booking_df = pd.DataFrame(columns=["Check In","Check Out","Nights","Guests",
                                     "Property","Room","Rate"])
 # print(type(json_string))
-if json_string:    
+if json_string:   
+
+    gs_df = pd.DataFrame(columns=["Service Provider","Start Date","Total Cost"])
+ 
     for booking in json_string.get("order",{}).get("bookings",{}):
 
         if booking.get('bookingType',{})=="ACCOMMODATION":
@@ -96,6 +104,7 @@ if json_string:
             given_name = json_string.get('order',{}).get('leadGuest',{}).get('givenName')
             family_name = json_string.get('order',{}).get('leadGuest',{}).get('familyName')
             name = f"{given_name} {family_name}"
+            
             with col1:
                 st.markdown(name)
             dt_check_in = pd.to_datetime(check_in)
@@ -117,19 +126,23 @@ if json_string:
                 st.markdown(booking_df.style.hide(axis="index")
                         .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
                         .set_properties(**{'font-size': '8pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
-                st.divider()
+                st.markdown(" ")
 
 
         elif booking.get('bookingType',{})=="SERVICE":
-            service_name = booking.get("serviceProvider",{}).get("serviceProviderName",{})
-            service_stdt = booking.get("items",{})[0].get("startDate",{})
-            service_tuple = (service_name,service_stdt)
-            st.markdown(service_tuple)
-            # NEED TO TRY FOR RHYTHM TOO
+            line_item = []
+            line_item.append(booking.get("serviceProvider",{}).get("serviceProviderName",{}))
+            line_item.append(booking.get("items",{})[0].get("startDate",{}))
 
-            print(service_name,service_stdt)
+            total_cost = 0
+            for item in booking.get("items"):
+                total_cost += int(item.get("priceRetail"))
 
+            line_item.append(total_cost)
 
+            # line_item.append(st.link_button("Launch Extra",f"https://app.roomboss.com/ui/booking/edit.jsf?bid={booking_id}"))
+            gs_df.loc[len(gs_df)] = line_item
+        
     with col1:
         ## Create the strings for emails ##
 
@@ -156,15 +169,24 @@ if json_string:
             st.markdown("[Self serve guest services link](%s)" % gsg_link)
             st.markdown("[Payment link](%s)" % payment_link)
 
+        invoiced = 0
+        paid = 0
         invoices = json_string.get("order",{}).get("invoicePayments")
         for invoice in invoices:
             amount = invoice.get("invoiceAmount")
             amount = int(amount)
-            amount = f'¥{amount:,}'
-            due_date = invoice.get("invoiceDueDate")
+            invoiced += amount
             invoice_number = invoice.get("invoiceNumber")
+
+            amount = f'¥{amount:,}'
+            
+            due_date = invoice.get("invoiceDueDate")
+
             payment_amount = invoice.get("paymentAmount")
+       
+
             payment_amount = int(payment_amount)
+            paid += payment_amount
             payment_amount = f'¥{payment_amount:,}'
             payment_date = invoice.get("paymentDate")
             
@@ -173,16 +195,34 @@ if json_string:
             payment_df.loc[len(payment_df)] = payment_line
             payment_df.reset_index(drop=True,inplace=True)
         if payment_df.shape[0] > 0:
+            
+                        
             with col2:
                 # st.table(payment_df)
                 st.markdown(payment_df.style.hide(axis="index")
+                        .apply(highlight,axis=1)
                         .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
                         .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
+                st.markdown(" ")
+                st.markdown(f"¥{invoiced:,} invoiced and ¥{paid:,} paid")
+                st.markdown(f"**¥{invoiced - paid:,} owing**")
+                st.divider()
+                st.markdown(gs_df.style.hide(axis="index")
+                                        .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
+                                        .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
 
         else:
             with col2:
                 st.markdown("**No Invoices**")
+                st.markdown(gs_df.style.hide(axis="index")
+                                        .apply(highlight,axis=1)
+                                        .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
+                                        .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
 #         pprint.pprint(invoices)
+
+
+# payment_df.style.apply(highlight,axis=1)
+
 
 st.divider()
 
@@ -200,3 +240,4 @@ hn_tasks_url = "https://docs.google.com/spreadsheets/d/1zIkN35Z-3xUrD1rm4ru2ssC6
 hn_tasks_link = st.link_button("HN Tasks Google Sheets",hn_tasks_url)
 
 # st.markdown("HN Tasks Google Sheet --> https://docs.google.com/spreadsheets/d/1zIkN35Z-3xUrD1rm4ru2ssC6h-cpTTgs0LNptnjmZms/edit?usp=sharing")
+

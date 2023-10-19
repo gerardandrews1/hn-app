@@ -11,7 +11,9 @@ import streamlit as st
 import datetime
 from datetime import date
 import seaborn as sns
-
+import time
+import os
+import sys
 
 st.set_page_config(layout="wide")
 
@@ -122,7 +124,21 @@ agent_per = agent_winter_gross/winter_gross
 top_column1,top_column2,top_column3 = st.columns(3)
 
 
+path = 'Bookings Clean.csv'
+  
+# Get the ctime  
+# for the specified path 
+try: 
+    c_time = os.path.getctime(path) 
+
+except OSError: 
+    print("Path '%s' does not exists or is inaccessible" %path) 
+    sys.exit() 
+local_time = time.ctime(c_time)[4:] 
+# local_time 
 with top_column2:
+    st.markdown(f"{local_time}")
+
     st.markdown(f"#### {season[0][1:-1]} Season ####")
     st.markdown(f"#### Bookings - {df_selection.shape[0]} ####")    
     st.markdown(f"#### Gross Sales ¥{winter_gross:,} ####")
@@ -178,11 +194,11 @@ with right_column:
 #     template="plotly_white"
 #     )
 # st.plotly_chart(fig_gross_channel)
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from datetime import date
+# import pandas as pd
+# import numpy as np
+# import matplotlib.pyplot as plt
+# import seaborn as sns
+# from datetime import date
 # df = pd.read_csv("../Downloads/Bookings Clean.csv")
 # df["Created"] = pd.to_datetime(df["Created"])
 
