@@ -88,6 +88,9 @@ if json_string:
 
             room = json_string.get("order",{}).get("bookings",
                                 {})[0].get("items",{})[0].get("roomNumber",{})
+            room = json_string.get("order",{}).get("bookings",
+                                {})[0].get("items",{})[0].get("roomType",{}).get("roomTypeName")
+
 
 
             guests = json_string.get("order",{}).get("bookings",
