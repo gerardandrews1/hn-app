@@ -1,20 +1,22 @@
-import streamlit as st
+import io
+import json
 import pandas as pd
 import requests
-import io
+import streamlit as st
 from pandas.io.json import json_normalize
 from ratelimit import limits, sleep_and_retry
-import json
-
-
-def highlight(s):
-                if s["Payment Date"] == None:
-                    return ['background-color: #50C878'] * len(s)
-                else:
-                    return ['background-color: white'] * len(s)
-
 
 st.set_page_config(layout="wide")
+
+def highlight(s):
+    """ Used to colour payment df if not paid """
+    if s["Payment Date"] == None:
+        return ['background-color: #ffb668'] * len(s)
+    else:
+        return ['background-color: white'] * len(s)
+
+
+
 col1, col2 = st.columns(2)
 json_string = None
 
@@ -60,13 +62,16 @@ if len(user_input) == 7 :
     
 else:
     st.markdown("Not a valid ID")
+
+# Create a df to append to later
 booking_df = pd.DataFrame(columns=["Check In","Check Out","Nights","Guests",
                                     "Property","Room","Rate"])
-# print(type(json_string))
+
+
 if json_string:   
 
     gs_df = pd.DataFrame(columns=["Service Provider","Start Date","Total Cost"])
- 
+    booking_cost = 0
     for booking in json_string.get("order",{}).get("bookings",{}):
 
         if booking.get('bookingType',{})=="ACCOMMODATION":
@@ -90,7 +95,10 @@ if json_string:
 
             rate = json_string.get("order",{}).get("bookings",
                                 {})[0].get("items",{})[0].get("priceRetail")
+            
+
             rate = int(rate)
+            booking_cost += rate
             rate = f'¥{rate:,}'
 
             check_in = json_string.get("order",{}).get("bookings",
@@ -116,11 +124,10 @@ if json_string:
 
             nights = (dt_check_out - dt_check_in).days
 
-
-            
+            # Create a list to append to df
             booking_line = [check_in,check_out,nights,guests,propertay,room,rate]
             booking_df.loc[len(booking_df)] = booking_line
-            # st.table(booking_df.style.hide(axis="index"))
+
 
             with col2:
                 st.markdown(booking_df.style.hide(axis="index")
@@ -129,7 +136,10 @@ if json_string:
                 st.markdown(" ")
 
 
+
+        ## Guest Service Part ##
         elif booking.get('bookingType',{})=="SERVICE":
+            
             line_item = []
             line_item.append(booking.get("serviceProvider",{}).get("serviceProviderName",{}))
             line_item.append(booking.get("items",{})[0].get("startDate",{}))
@@ -138,11 +148,12 @@ if json_string:
             for item in booking.get("items"):
                 total_cost += int(item.get("priceRetail"))
 
-            line_item.append(total_cost)
+            line_item.append(f"¥{total_cost:,}")
+
 
             # line_item.append(st.link_button("Launch Extra",f"https://app.roomboss.com/ui/booking/edit.jsf?bid={booking_id}"))
             gs_df.loc[len(gs_df)] = line_item
-        
+            booking_cost += total_cost
     with col1:
         ## Create the strings for emails ##
 
@@ -161,7 +172,7 @@ if json_string:
         ## Create the links ##
 # Old Guest services link https://holidayniseko.evoke.jp/public/booking/order02.jsf?mv=1&vs=Guestservices&bookingEid={user_input}"
         payment_df = pd.DataFrame(columns=["Invoice No","Due Date","Invoice Amount",
-                                           "Payment Amount","Payment Date"])
+                                           "Payment Amount","Payment Date","Payment ID"])
         if email:
 
             gsg_link = f"https://holidayniseko2.evoke.jp/public/booking/order02.jsf?mv=1&vs=Guestservices&bookingEid={user_input}"
@@ -173,9 +184,11 @@ if json_string:
         paid = 0
         invoices = json_string.get("order",{}).get("invoicePayments")
         for invoice in invoices:
+            
             amount = invoice.get("invoiceAmount")
             amount = int(amount)
             invoiced += amount
+            # booking_cost += invoiced
             invoice_number = invoice.get("invoiceNumber")
 
             amount = f'¥{amount:,}'
@@ -187,40 +200,50 @@ if json_string:
 
             payment_amount = int(payment_amount)
             paid += payment_amount
+            # booking_cost -= payment_amount
+
             payment_amount = f'¥{payment_amount:,}'
             payment_date = invoice.get("paymentDate")
+            payment_id = invoice.get("paymentId")
+
             
-            payment_line = [invoice_number,due_date,amount,payment_amount,payment_date]
+            payment_line = [invoice_number,due_date,amount,payment_amount,payment_date,payment_id]
             
             payment_df.loc[len(payment_df)] = payment_line
             payment_df.reset_index(drop=True,inplace=True)
-        if payment_df.shape[0] > 0:
-            
-                        
-            with col2:
-                # st.table(payment_df)
-                st.markdown(payment_df.style.hide(axis="index")
-                        .apply(highlight,axis=1)
-                        .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
-                        .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
-                st.markdown(" ")
-                st.markdown(f"¥{invoiced:,} invoiced and ¥{paid:,} paid")
-                st.markdown(f"**¥{invoiced - paid:,} owing**")
-                st.divider()
-                st.markdown(gs_df.style.hide(axis="index")
-                                        .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
-                                        .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
 
-        else:
-            with col2:
-                st.markdown("**No Invoices**")
-                st.markdown(gs_df.style.hide(axis="index")
-                                        .apply(highlight,axis=1)
-                                        .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
-                                        .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
+
+    if payment_df.shape[0] > 0:
+        
+                    
+        with col2:
+            # st.table(payment_df)
+            st.markdown(payment_df.style.hide(axis="index")
+                    .apply(highlight,axis=1)
+                    .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
+                    .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
+            st.markdown(" ")
+            st.markdown(f"¥{invoiced:,} invoiced and ¥{paid:,} paid")
+            st.markdown(f"**¥{invoiced - paid:,} owing**")
+            st.divider()
+            st.markdown(gs_df.style.hide(axis="index")
+                                    .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
+                                    .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
+            # st.markdown(gsg_total)
+            
+
+    else:
+        with col2:
+            st.markdown("**No Invoices**")
+            st.markdown(gs_df.style.hide(axis="index")
+                                    .apply(highlight,axis=1)
+                                    .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
+                                    .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
 #         pprint.pprint(invoices)
 
-
+    with col1:
+        st.markdown(f"**Cost of booking ¥{booking_cost:,}**")
+        st.markdown(f"**Invoiced on booking ¥{invoiced:,}**")
 # payment_df.style.apply(highlight,axis=1)
 
 
@@ -238,6 +261,9 @@ gsg_link = st.link_button("Guest Services Guide", gsg_url)
 
 hn_tasks_url = "https://docs.google.com/spreadsheets/d/1zIkN35Z-3xUrD1rm4ru2ssC6h-cpTTgs0LNptnjmZms/edit?usp=sharing)"
 hn_tasks_link = st.link_button("HN Tasks Google Sheets",hn_tasks_url)
+
+email_spiels_url = "https://docs.google.com/document/d/119EWDec3PDV8SIWkpjVcjXHpkJB_bsPBxMk0yfiHfmI/edit?usp=sharing"
+email_spiels_link = st.link_button("Email Spiels",email_spiels_url)
 
 # st.markdown("HN Tasks Google Sheet --> https://docs.google.com/spreadsheets/d/1zIkN35Z-3xUrD1rm4ru2ssC6h-cpTTgs0LNptnjmZms/edit?usp=sharing")
 
