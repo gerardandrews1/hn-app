@@ -1,212 +1,272 @@
-# -*- coding: utf-8 -*-
-"""
-Spyder Editor
-
-This is a temporary script file.
-"""
+import io
+import json
 import pandas as pd
-import numpy as np
-import plotly.express as px
+import requests
 import streamlit as st
-import datetime
-from datetime import date
-import seaborn as sns
-import time
-import os
-import sys
+from pandas.io.json import json_normalize
+from ratelimit import limits, sleep_and_retry
 
 st.set_page_config(layout="wide")
 
-st.markdown('<style>div.block-container{padding-top:1rem;}</style>',unsafe_allow_html=True)
-st.markdown('<style>div.block-container{padding-top:1rem;}</style>',unsafe_allow_html=True)
-
-df = pd.read_csv("Bookings Clean.csv")
-
-df["Created"] = pd.to_datetime(df["Created"])
-
-
-df['Start date'] = pd.to_datetime(df['Start date'])
-df['Start date'] = df['Start date'].dt.strftime('%d-%m-%Y')
+def highlight(s):
+    """ Used to colour payment df if not paid """
+    if s["Payment Date"] == None:
+        return ['background-color: #ffb668'] * len(s)
+    else:
+        return ['background-color: white'] * len(s)
 
 
 
-df = df[["Created","ID","Lead Guest","ChannelAS1","ChannelAS2","Gross","Net","Vendor","Product","Start date","Nights","Booking Year","Booking Month","Season"]]
+col1, col2 = st.columns(2)
+json_string = None
 
 
+# Set API call limit 
+three_mins = 180
 
-# SIDE BAR ACTION #
-season_list = ["'23/24'", "'Summer 23'",
-"'22/23'","'21/22'",
-"'20/21'","'19/20'",
-"'18/19'","'17/18'",
-"'16/17'","'15/16'",
-"'14/15'","'13/14'",
-"'12/13'","'11/12'",
-"'10/11'","'09/10'","'0'",
-"'Pre 09/10'"]
-season_list.insert(0,"All")
+@limits(calls=15, period=three_mins)
+def call_api(ebook_id):
+    
+    """
+    Send request to API
+    Wrapper 15 calls per 3 min limit 
+    imposed. 
+    Using HN API credentials
+    """
 
-season = st.sidebar.multiselect(
-    "Filter by Stay Season:",
-    options=season_list,
-    default=["'23/24'"])
+    url = "https://api.roomboss.com/extws/hotel/v1/listBooking?bookingEid="+ebook_id
+    
+    auth = ('holidayniseko',"Deo6FYvVgtcmQMTU")
+    
+    response = requests.get(url,auth=auth)
 
-if "All" in season:
-    season = df["Season"].unique().tolist()
-
-
-shortcut = st.sidebar.multiselect(
-    "Season/Month/7 Days Filter",
-    options=["MTD","Last 7 Days"])
+    if response.status_code != 200:
+        raise Exception('API response: {}'.format(response.status_code))
+    return response
 
 
-if shortcut:
-    if shortcut[0] == "Last 7 Days":
+with col1:
+    user_input = st.text_input("Input booking ID")
 
-        today = date.today()
+user_input = user_input.strip()
+   
+if len(user_input) == 7 :
+    
+    try:
+        response = call_api(user_input)
 
-        df = df[df.Created.dt.date > (today - datetime.timedelta(days=7))]
-
-    if shortcut[0] == "MTD":
+        json_string = json.loads(response.text)
         
-        today = date.today()
-        month = today.month
-        df = df[df.Created.dt.date > (today - datetime.timedelta(days=35))]
-        df = df[df.Created.dt.month==month]
+    except Exception:
+        print(Exception)
+    
+else:
+    st.markdown("Not a valid ID")
 
-## Finish the side bar ##
-
-
-
-
-df_selection = df.query(
-        "Season == @season")
+# Create a df to append to later
+booking_df = pd.DataFrame(columns=["Check In","Check Out","Nights","Guests",
+                                    "Property","Room","Rate"])
 
 
-winter_gross = int(df_selection["Gross"].sum())
-winter_avg_gross = int(df_selection[df_selection.Gross != 0].Gross.mean())
+if json_string:   
 
-### Next lets do by booking month
+    gs_df = pd.DataFrame(columns=["Service Provider","Start Date","Total Cost"])
+    booking_cost = 0
+    for booking in json_string.get("order",{}).get("bookings",{}):
 
-ota_winter_gross = int(df_selection[df_selection.ChannelAS1 == "OTA"]["Gross"].sum())
-ota_winter_avg_gross = int(df_selection[(df_selection.Gross != 0)&(df_selection.ChannelAS1=="OTA")].Gross.mean())
-ota_per = ota_winter_gross/winter_gross
-
-
-direct_winter_gross = int(df_selection[df_selection.ChannelAS2 == "Direct"].Gross.sum())
-direct_winter_avg_gross = int(df_selection[(df_selection.Gross != 0)&(df_selection.ChannelAS2=="Direct")].Gross.mean())
-direct_per = direct_winter_gross/winter_gross
-
-### Split by channel
-
-agent_winter_gross = int(df_selection[df_selection.ChannelAS2 == "Agent"].Gross.sum())
-agent_winter_avg_gross = int(df_selection[(df_selection.Gross != 0)&(df_selection.ChannelAS2=="Agent")].Gross.mean())
-agent_per = agent_winter_gross/winter_gross
+        if booking.get('bookingType',{})=="ACCOMMODATION":
 
 
-# ota_winter_avg_gross = float(df_selection[(~df_selection.Gross.isnull())&(df_selection.ChannelAS2=="OTA")].Gross.mean())
+            bid = json_string['order']['bookings'][0]['bookingId']
+            # easy_link = "https://app.roomboss.com/ui/booking/edit.jsf?bid=" + bid 
 
+            # example_dict.get('key1', {}).get('key2')
 
-# df['column_name'].astype(np.float).astype("Int32")
+            propertay = json_string.get("order",{}).get("bookings",
+                                {})[0].get("hotel",{}).get("hotelName",
+                                {})
+
+            room = json_string.get("order",{}).get("bookings",
+                                {})[0].get("items",{})[0].get("roomNumber",{})
+            room = json_string.get("order",{}).get("bookings",
+                                {})[0].get("items",{})[0].get("roomType",{}).get("roomTypeName")
 
 
 
+            guests = json_string.get("order",{}).get("bookings",
+                                {})[0].get("items",{})[0].get("numberGuests",{})
+
+            rate = json_string.get("order",{}).get("bookings",
+                                {})[0].get("items",{})[0].get("priceRetail")
+            
+
+            rate = int(rate)
+            booking_cost += rate
+            rate = f'¥{rate:,}'
+
+            check_in = json_string.get("order",{}).get("bookings",
+                                {})[0].get("items",{})[0].get("checkIn",{})
+
+            check_out = json_string.get("order",{}).get("bookings",
+                                {})[0].get("items",{})[0].get("checkOut",{})
+
+            email = json_string.get('order',{}).get('leadGuest',{}).get('email',{})
+
+            given_name = json_string.get('order',{}).get('leadGuest',{}).get('givenName')
+            family_name = json_string.get('order',{}).get('leadGuest',{}).get('familyName')
+            name = f"{given_name} {family_name}"
+            
+            with col1:
+                st.markdown(name)
+            dt_check_in = pd.to_datetime(check_in)
+
+            dt_check_out = pd.to_datetime(check_out)
+
+            check_in = check_in.replace("-","/")
+            check_out = check_out.replace("-","/")
+
+            nights = (dt_check_out - dt_check_in).days
+
+            # Create a list to append to df
+            booking_line = [check_in,check_out,nights,guests,propertay,room,rate]
+            booking_df.loc[len(booking_df)] = booking_line
+
+
+            with col2:
+                st.markdown(booking_df.style.hide(axis="index")
+                        .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
+                        .set_properties(**{'font-size': '8pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
+                st.markdown(" ")
 
 
 
+        ## Guest Service Part ##
+        elif booking.get('bookingType',{})=="SERVICE":
+            
+            line_item = []
+            line_item.append(booking.get("serviceProvider",{}).get("serviceProviderName",{}))
+            line_item.append(booking.get("items",{})[0].get("startDate",{}))
 
-# # TOP METRICS
-# total_net = int(df_selection["Net"].sum())
-# total_gross = int(df_selection["Gross"].sum())
-# total_nights = int(df_selection["Nights"].sum())
-# avg_gross = round(df_selection[("Gross")].mean(),0)
-# avg_nights = round(df_selection[("Nights")].mean(),0)
-top_column1,top_column2,top_column3 = st.columns(3)
+            total_cost = 0
+            for item in booking.get("items"):
+                total_cost += int(item.get("priceRetail"))
 
-
-path = 'Bookings Clean.csv'
-  
-# Get the ctime  
-# for the specified path 
-try: 
-    c_time = os.path.getctime(path) 
-
-except OSError: 
-    print("Path '%s' does not exists or is inaccessible" %path) 
-    sys.exit() 
-local_time = time.ctime(c_time)[4:] 
-# local_time 
-with top_column2:
-    st.markdown(f"{local_time}")
-
-    st.markdown(f"#### {season[0][1:-1]} Season ####")
-    st.markdown(f"#### Bookings - {df_selection.shape[0]} ####")    
-    st.markdown(f"#### Gross Sales ¥{winter_gross:,} ####")
-    st.markdown(f"#### Avg/booking ¥{winter_avg_gross:,} ####")
+            line_item.append(f"¥{total_cost:,}")
 
 
+            # line_item.append(st.link_button("Launch Extra",f"https://app.roomboss.com/ui/booking/edit.jsf?bid={booking_id}"))
+            gs_df.loc[len(gs_df)] = line_item
+            booking_cost += total_cost
+    with col1:
+        ## Create the strings for emails ##
+
+        if email:
+            st.markdown(email)
+        with col2:
+            email_string = f"""{propertay} Booking #{user_input} ~ {check_in} - {check_out} ~ ({guests} guests, {nights} nights)"""
+            st.markdown(email_string)
+
+        
+        roomboss_url =  f"https://app.roomboss.com/ui/booking/edit.jsf?bid={bid}"
+        st.markdown("[Go to booking in Roomboss](%s)" % roomboss_url)
 
 
 
+        ## Create the links ##
+# Old Guest services link https://holidayniseko.evoke.jp/public/booking/order02.jsf?mv=1&vs=Guestservices&bookingEid={user_input}"
+        payment_df = pd.DataFrame(columns=["Invoice No","Due Date","Invoice Amount",
+                                           "Payment Amount","Payment Date","Payment ID"])
+        if email:
+
+            gsg_link = f"https://holidayniseko2.evoke.jp/public/booking/order02.jsf?mv=1&vs=Guestservices&bookingEid={user_input}"
+            payment_link = f"https://holidayniseko.evoke.jp/public/yourbooking.jsf?id={user_input}&em={email}"
+            st.markdown("[Self serve guest services link](%s)" % gsg_link)
+            st.markdown("[Payment link](%s)" % payment_link)
+
+        invoiced = 0
+        paid = 0
+        invoices = json_string.get("order",{}).get("invoicePayments")
+        for invoice in invoices:
+            
+            amount = invoice.get("invoiceAmount")
+            amount = int(amount)
+            invoiced += amount
+            # booking_cost += invoiced
+            invoice_number = invoice.get("invoiceNumber")
+
+            amount = f'¥{amount:,}'
+            
+            due_date = invoice.get("invoiceDueDate")
+
+            payment_amount = invoice.get("paymentAmount")
+       
+
+            payment_amount = int(payment_amount)
+            paid += payment_amount
+            # booking_cost -= payment_amount
+
+            payment_amount = f'¥{payment_amount:,}'
+            payment_date = invoice.get("paymentDate")
+            payment_id = invoice.get("paymentId")
+
+            
+            payment_line = [invoice_number,due_date,amount,payment_amount,payment_date,payment_id]
+            
+            payment_df.loc[len(payment_df)] = payment_line
+            payment_df.reset_index(drop=True,inplace=True)
+
+
+    if payment_df.shape[0] > 0:
+        
+                    
+        with col2:
+            # st.table(payment_df)
+            st.markdown(payment_df.style.hide(axis="index")
+                    .apply(highlight,axis=1)
+                    .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
+                    .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
+            st.markdown(" ")
+            st.markdown(f"¥{invoiced:,} invoiced and ¥{paid:,} paid")
+            st.markdown(f"**¥{invoiced - paid:,} owing**")
+            st.divider()
+            st.markdown(gs_df.style.hide(axis="index")
+                                    .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
+                                    .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
+            # st.markdown(gsg_total)
+            
+
+    else:
+        with col2:
+            st.markdown("**No Invoices**")
+            st.markdown(gs_df.style.hide(axis="index")
+                                    .apply(highlight,axis=1)
+                                    .set_table_styles([{'selector': 'th', 'props': [('font-size', '10pt'),('text-align','center')]}])
+                                    .set_properties(**{'font-size': '10pt','text-align':'center'}).to_html(),unsafe_allow_html=True)
+#         pprint.pprint(invoices)
+
+    with col1:
+        st.markdown(f"**Cost of booking ¥{booking_cost:,}**")
+        st.markdown(f"**Invoiced on booking ¥{invoiced:,}**")
+# payment_df.style.apply(highlight,axis=1)
 
 
 st.divider()
 
-left_column, middle_column, right_column = st.columns(3)
+prop_url = "https://docs.google.com/document/d/1pgRIOGFoOwALqThPm1VOo5a8lwpzkZiCxTW-sh-i2pw/edit?usp=sharing"
+# st.markdown(prop_link,unsafe_allow_html=True)
+prop_link = st.link_button("Property Spiels", prop_url)
 
 
-with left_column:
-
-    st.markdown(f"#### Agent - {round(agent_per*100,1)}%")
-    st.subheader(f"¥{agent_winter_gross:,}")
-    # st.subheader(f"¥{agent_winter_gross:,}")#     st.subheader("Total Gross:")
-    st.subheader(f"Avg/booking: ¥ {agent_winter_avg_gross:,}")
-    st.markdown("---------")
-
-with middle_column:
-    st.subheader(f"Website  -  {round(direct_per*100,1)}%")
-    st.subheader(f"¥{direct_winter_gross:,}")#     st.subheader("Total Gross:")
-    st.subheader(f"Avg/booking: ¥{direct_winter_avg_gross:,}")
-    st.markdown("---------")
-    
-    
-    
-    
-with right_column:
-    st.subheader(f"OTA - {round(ota_per*100,1)}%")
-    st.subheader(f"¥{ota_winter_gross:,}")#     st.subheader("Total Gross:")
-    st.subheader(f"Avg/booking: ¥ {ota_winter_avg_gross:,}")
-    st.markdown("---------")
-    
-# data = df_selection.groupby(["Booking Month","ChannelAS1"], as_index=False)["Gross"].sum()
-# plot = sns.lineplot(data=data, x='Booking Month', y='Gross', hue='ChannelAS1')
-
-# st.plotly_chart(plot)
 
 
-# fig_gross_channel = px.line(
-#     data,
-#     x="Booking Month",
-#     y = "Gross",
-#     hue="ChannelAS1",
-#     orientation="h",
-#     title="<b>Gross by Channel</b>",
-#     template="plotly_white"
-#     )
-# st.plotly_chart(fig_gross_channel)
-# import pandas as pd
-# import numpy as np
-# import matplotlib.pyplot as plt
-# import seaborn as sns
-# from datetime import date
-# df = pd.read_csv("../Downloads/Bookings Clean.csv")
-# df["Created"] = pd.to_datetime(df["Created"])
+gsg_url= "https://holidayniseko.com/sites/default/files/services/2023-08/Holiday%20Niseko%20Guest%20Service%20Guide%202023_2024.pdf"
+gsg_link = st.link_button("Guest Services Guide", gsg_url)
 
-seasons =  ["'22/23'", "'23/24'","'17/18'","'18/19'"]
+hn_tasks_url = "https://docs.google.com/spreadsheets/d/1zIkN35Z-3xUrD1rm4ru2ssC6h-cpTTgs0LNptnjmZms/edit?usp=sharing)"
+hn_tasks_link = st.link_button("HN Tasks Google Sheets",hn_tasks_url)
 
-# df = df[df.Season.isin(seasons)]
-# fig = plt.figure(figsize=(9,7))
+email_spiels_url = "https://docs.google.com/document/d/119EWDec3PDV8SIWkpjVcjXHpkJB_bsPBxMk0yfiHfmI/edit?usp=sharing"
+email_spiels_link = st.link_button("Email Spiels",email_spiels_url)
 
-# sns.lineplot(data=df, x="Booking Month", y="Gross",hue="Season",ci=None,estimator='sum')   
-# st.pyplot(fig)
+# st.markdown("HN Tasks Google Sheet --> https://docs.google.com/spreadsheets/d/1zIkN35Z-3xUrD1rm4ru2ssC6h-cpTTgs0LNptnjmZms/edit?usp=sharing")
 
