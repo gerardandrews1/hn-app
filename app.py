@@ -36,7 +36,7 @@ def call_api(ebook_id):
 
     url = "https://api.roomboss.com/extws/hotel/v1/listBooking?bookingEid="+ebook_id
     
-    auth = ('holidayniseko',"Deo6FYvVgtcmQMTU")
+    auth = (st.secrets["username"],st.secrets["password"])
     
     response = requests.get(url,auth=auth)
 
